@@ -5,6 +5,8 @@ A simple pack of utility nodes for **ComfyUI** featuring saving/loading speakers
 This pack was created primarily to support my other project — a fully Autonomous Telegram Bot inside a single ComfyUI workflow.
 
 ---
+<img width="1924" height="679" alt="image" src="https://github.com/user-attachments/assets/e879eb60-5377-4d3d-b9cb-84cf5902ba2b" />
+
 
 ## 🧩 List of Nodes
 
@@ -27,7 +29,7 @@ Designed for TTS (Text-to-Speech) workflows, voice cloning, and audio archiving.
 * **CB Save Text File:** Saves text strings into files with three operation modes: `overwrite` (replace), `append` (add to end), or `increment` (automatically generates numbered filenames like `config_00001.txt`).
 
 ### 🔄 Type Conversion
-* **AnyToPrimitive:** Accepts **any** input connection type and safely converts it to a standard primitive: `STRING`, `FLOAT`, `INT`, or `BOOLEAN`.
+* **CB Data type Converter:** Accepts **any** input connection type and safely converts it to a standard primitive: `STRING`, `FLOAT`, `INT`, or `BOOLEAN`.
 
 ---
 
