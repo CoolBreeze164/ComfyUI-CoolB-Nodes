@@ -5,10 +5,10 @@ A simple pack of utility nodes for **ComfyUI** featuring saving/loading speakers
 This pack was created primarily to support my other project — a fully Autonomous Telegram Bot inside a single ComfyUI workflow.
 
 ---
-<img width="1924" height="679" alt="image" src="https://github.com/user-attachments/assets/e879eb60-5377-4d3d-b9cb-84cf5902ba2b" />
-
 
 ## 🧩 List of Nodes
+
+<img width="1710" height="1067" alt="image" src="https://github.com/user-attachments/assets/9e7050e5-f184-4c3a-b682-a4e2ee57c9a2" />
 
 ### 🎙️ Audio & Speaker Management
 Designed for TTS (Text-to-Speech) workflows, voice cloning, and audio archiving. Automatically uses `PyAV`, `torchaudio`, or native fallbacks.
