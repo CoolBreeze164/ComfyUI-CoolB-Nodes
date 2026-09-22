@@ -43,6 +43,7 @@ DEFAULT_CONFIG = {
 AUDIO_EXTENSIONS = (".mp3", ".wav", ".mp4")
 PLACEHOLDER = "[no speakers saved]"
 
+_CATEGORY = "CoolB вљЎпёЏ"
 
 def comfyui_root():
     if folder_paths is not None:
@@ -1125,6 +1126,57 @@ def empty_audio():
     }
 
 
+def _assert_within_base(base_dir, candidate):
+    """Realpath both sides and prove containment with commonpath.
+
+    commonpath is segment-aware (unlike startswith), and realpath resolves
+    symlinks, so symlink-based escapes are caught as well.
+    """
+    base_real = os.path.realpath(base_dir)
+    candidate_real = os.path.realpath(candidate)
+    try:
+        common = os.path.commonpath([base_real, candidate_real])
+    except ValueError:
+        # e.g. paths on different Windows drives
+        raise ValueError("Path escapes the allowed base directory.")
+    if common != base_real:
+        raise ValueError("Path escapes the allowed base directory.")
+    return candidate_real
+
+
+def _safe_resolve_under_base(base_dir, file_path):
+    """Resolve a widget-supplied path strictly inside base_dir.
+
+    Rejects absolute paths, rooted paths, drive/UNC prefixes, null bytes and
+    any '..' segment, then verifies containment against the resolved base.
+    """
+    raw = str(file_path or "").strip()
+    if not raw:
+        raise ValueError("File path is empty.")
+    if "\x00" in raw:
+        raise ValueError("File path contains invalid characters.")
+
+    normalized = raw.replace("\\", "/")
+
+    # Reject absolute / rooted paths before touching the filesystem.
+    if os.path.isabs(raw) or normalized.startswith("/"):
+        raise ValueError(f"Absolute paths are not allowed: '{file_path}'")
+    # Windows drive-letter ("C:x", "C:\x") and UNC ("\\server\...", "\x") roots.
+    if len(raw) >= 2 and raw[1] == ":":
+        raise ValueError(f"Drive paths are not allowed: '{file_path}'")
+    if raw.startswith("\\"):
+        raise ValueError(f"Rooted paths are not allowed: '{file_path}'")
+
+    # Reject any '..' segment, even one that would resolve back inside base.
+    segments = [p for p in normalized.split("/") if p not in ("", ".")]
+    if not segments:
+        raise ValueError("File path is empty.")
+    if any(seg == ".." for seg in segments):
+        raise ValueError("Path traversal ('..') is not allowed.")
+
+    return _assert_within_base(base_dir, os.path.join(base_dir, raw))
+
+
 class SaveSpeaker:
     @classmethod
     def INPUT_TYPES(cls):
@@ -1148,7 +1200,7 @@ class SaveSpeaker:
     RETURN_TYPES = ()
     OUTPUT_NODE = True
     FUNCTION = "save_speaker"
-    CATEGORY = "CoolB"
+    CATEGORY = f"{_CATEGORY}"
     DESCRIPTION = "Saves a speaker's voice audio sample and corresponding speach transcription together. Default saving folder is models/SPEAKERS (can be changed in config.json)."
 
     def save_speaker(self, ref_audio, ref_text, speaker_name, audio_format="mp3"):
@@ -1210,7 +1262,7 @@ class LoadSpeaker:
     RETURN_TYPES = ("AUDIO", "STRING")
     RETURN_NAMES = ("ref_audio", "ref_text")
     FUNCTION = "load_speaker"
-    CATEGORY = "CoolB"
+    CATEGORY = f"{_CATEGORY}"
     DESCRIPTION = "Loads a speaker's voice audio sample and corresponding speach transcription from the saving folder. Default saving folder is models/SPEAKERS (can be changed in config.json)."
 
     def load_speaker(self, speaker):
@@ -1265,7 +1317,7 @@ class SetMuteBypassState:
         }
 
     FUNCTION = "doit"
-    CATEGORY = "CoolB"
+    CATEGORY = f"{_CATEGORY}"
     RETURN_TYPES = ("*",)
     RETURN_NAMES = ("signal",)
     OUTPUT_NODE = True
@@ -1321,7 +1373,7 @@ class Textbox:
     RETURN_NAMES = ("text",)
     OUTPUT_NODE = True
     FUNCTION = "textbox"
-    CATEGORY = "CoolB"
+    CATEGORY = f"{_CATEGORY}"
     DESCRIPTION = "Just a simple textbox. Can accept any input and convert it to string which overwrites the widget."
 
     def textbox(self, text="", passthrough=None):
@@ -1381,7 +1433,7 @@ class StringListMatchIndex:
     RETURN_TYPES = ("INT", "BOOLEAN")
     RETURN_NAMES = ("index", "matched")
     FUNCTION = "find_index"
-    CATEGORY = "CoolB"
+    CATEGORY = f"{_CATEGORY}"
     
     DESCRIPTION = "Compares an input string against a list using custom matching rules. Returns a 1-based index if matched, or 0 if not found."
 
@@ -1433,26 +1485,27 @@ class TextFileReader:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("text_content",)
     FUNCTION = "read_file"
-    CATEGORY = "CoolB"
-    DESCRIPTION = "Loads a text file from path."
+    CATEGORY = f"{_CATEGORY}"
+    DESCRIPTION = "Loads a text file from path within ComfyUI root folder."
 
 
     def read_file(self, file_path):
-        # Resolve path relative to ComfyUI base directory
+        # Resolve path relative to ComfyUI base directory, confined to it.
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        full_path = os.path.abspath(os.path.join(base_dir, file_path))
-        
-        # Security boundaries check (Optional but prevents escaping root dir unnecessarily)
-        if not os.path.exists(full_path):
+        try:
+            full_path = _safe_resolve_under_base(base_dir, file_path)
+        except ValueError as e:
+            return (f"Error: {e}",)
+
+        if not os.path.isfile(full_path):
             return (f"Error: File not found at path '{file_path}'",)
-            
+
         try:
             with open(full_path, "r", encoding="utf-8") as f:
                 content = f.read()
             return (content,)
         except Exception as e:
             return (f"Error reading file: {str(e)}",)
-
 
 class TextFileWriter:
     @classmethod
@@ -1478,17 +1531,19 @@ class TextFileWriter:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("saved_text",)
     FUNCTION = "save_file"
-    CATEGORY = "CoolB"
+    CATEGORY = f"{_CATEGORY}"
     OUTPUT_NODE = True
-    DESCRIPTION = "Saves a string into a text file."
+    DESCRIPTION = "Saves a string into a text file within ComfyUI root folder."
 
 
     def save_file(self, file_path, mode, text_input):
-        # 1. Setup base paths
+        # 1. Setup base paths (confined to the ComfyUI root).
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-        full_path = os.path.abspath(os.path.join(base_dir, file_path))
-        os.makedirs(os.path.dirname(full_path), exist_ok=True)
-        
+        try:
+            full_path = _safe_resolve_under_base(base_dir, file_path)
+        except ValueError as e:
+            return (f"Error: {e}",)
+
         write_mode = "w"
         content_to_write = str(text_input)
 
@@ -1498,24 +1553,33 @@ class TextFileWriter:
             # If appending and the file already exists and is not empty, add a newline separator
             if os.path.exists(full_path) and os.path.getsize(full_path) > 0:
                 content_to_write = "\n" + content_to_write
-
         elif mode == "increment":
             if os.path.exists(full_path):
                 dir_name = os.path.dirname(full_path)
                 file_name = os.path.basename(full_path)
                 name, ext = os.path.splitext(file_name)
-                
                 counter = 1
                 while True:
                     new_file_name = f"{name}_{counter:05d}{ext}"
                     new_full_path = os.path.join(dir_name, new_file_name)
-                    
                     if not os.path.exists(new_full_path):
                         full_path = new_full_path
                         break
                     counter += 1
+                # Defense in depth: re-validate the incremented target.
+                try:
+                    full_path = _assert_within_base(base_dir, full_path)
+                except ValueError as e:
+                    return (f"Error: {e}",)
 
-        # 3. Write file
+        # 3. Create directories only inside the validated base directory.
+        try:
+            os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        except Exception as e:
+            print(f"[Save Text File Error] Failed to create directories: {str(e)}")
+            return (f"Error: {str(e)}",)
+
+        # 4. Write file
         try:
             with open(full_path, write_mode, encoding="utf-8") as f:
                 f.write(content_to_write)
@@ -1524,6 +1588,7 @@ class TextFileWriter:
             return (f"Error: {str(e)}",)
 
         return (content_to_write,)
+
 
 class StringSelector:
     """
@@ -1554,7 +1619,7 @@ class StringSelector:
 
     RETURN_TYPES = ("STRING",)
     FUNCTION = "select_string"
-    CATEGORY = "CoolB"
+    CATEGORY = f"{_CATEGORY}"
     OUTPUT_NODE = False
     DESCRIPTION = "Splits a string into substrings based on chosen delimiter and returns the substring, selected by index."
 
@@ -1600,7 +1665,7 @@ class SetGroupMuteBypassState:
         }
 
     FUNCTION = "doitgr"
-    CATEGORY = "CoolB"
+    CATEGORY = f"{_CATEGORY}"
     RETURN_TYPES = ("*",)
     RETURN_NAMES = ("signal",)
     OUTPUT_NODE = True
@@ -1632,7 +1697,7 @@ class AnyToPrimitive:
     RETURN_TYPES = ("*",)
     RETURN_NAMES = ("converted_value",)
     FUNCTION = "convert"
-    CATEGORY = "CoolB"
+    CATEGORY = f"{_CATEGORY}"
     DESCRIPTION = "Converts any data type to String, Int, Float or Boolean."
 
     def convert(self, value, output_type):
