@@ -26,16 +26,18 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "SaveSpeaker": "CB Save Speaker",
-    "LoadSpeaker": "CB Load Speaker",
-    "SetMuteBypassState": "CB Set Mute/Bypass State",
-    "CBTextbox": "CB Textbox",
-    "StringListMatchIndex": "CB String List Match Index",
-    "TextFileReader": "CB Read Text File",
-    "TextFileWriter": "CB Save Text File",
-    "CBStringSelector": "CB String Selector",
-    "SetGroupMuteBypassState": "CB Set Group Mute/Bypass State",
-    "AnyToPrimitive": "CB Data type Converter",
+    f"{k}": f"CB {v} вљЎпёЏ" for k, v in {
+        "SaveSpeaker": "Save Speaker",
+        "LoadSpeaker": "Load Speaker",
+        "SetMuteBypassState": "Set Mute/Bypass State",
+        "CBTextbox": "Textbox",
+        "StringListMatchIndex": "String List Match Index",
+        "TextFileReader": "Read Text File",
+        "TextFileWriter": "Save Text File",
+        "CBStringSelector": "String Selector",
+        "SetGroupMuteBypassState": "Set Group Mute/Bypass State",
+        "AnyToPrimitive": "Data type Converter",
+    }.items()
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
