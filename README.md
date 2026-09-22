@@ -1,14 +1,14 @@
-# ComfyUI CoolB Nodes
+# ComfyUI CoolB Nodes ⚡️
 
 A simple pack of utility nodes for **ComfyUI** featuring saving/loading speakers with transcripts (useful alongside TTS packs), execution flow control (muting/bypassing nodes and groups on trigger to actively change the workflow state from run to run), some useful text file utilities (including save/load text file) and data type conversion.
 
-This pack was created primarily to support my other project — a fully Autonomous Telegram Bot inside a single ComfyUI workflow.
+This pack was created primarily to support my other project — a fully [Autonomous Telegram Bot](https://github.com/CoolBreeze164/ComfyUI-Autonomous-Telegram-Bot) inside a single ComfyUI workflow.
 
 ---
 
 ## 🧩 List of Nodes
 
-<img width="1710" height="1067" alt="image" src="https://github.com/user-attachments/assets/9e7050e5-f184-4c3a-b682-a4e2ee57c9a2" />
+<img width="1591" height="1061" alt="image" src="https://github.com/user-attachments/assets/33939e50-a6e4-41b1-84a2-0d83f5b70c2b" />
 
 ### 🎙️ Audio & Speaker Management
 Designed for TTS (Text-to-Speech) workflows, voice cloning, and audio archiving. Automatically uses `PyAV`, `torchaudio`, or native fallbacks.
