@@ -58,6 +58,23 @@ def comfyui_root():
     return os.path.dirname(os.path.dirname(PACK_DIR))
 
 
+def text_io_base_dir():
+    """Base directory for TextFileReader / TextFileWriter.
+
+    Uses the ComfyUI output directory instead of the whole root, so neither
+    node can reach custom_nodes/ (executable code), user/ (settings/keys),
+    or models/. Falls back to <root>/output when folder_paths is absent.
+    """
+    if folder_paths is not None:
+        try:
+            out = folder_paths.get_output_directory()
+            if out:
+                return os.path.abspath(str(out))
+        except Exception:
+            pass
+    return os.path.abspath(os.path.join(comfyui_root(), "output"))
+
+
 def default_speakers_dir():
     if folder_paths is not None:
         models = getattr(folder_paths, "models_dir", None)
@@ -1476,8 +1493,9 @@ class TextFileReader:
         return {
             "required": {
                 "file_path": ("STRING", {
-                    "default": "output/configs/config1.txt", 
-                    "multiline": False
+                    "default": "configs/config1.txt",
+                    "multiline": False,
+                    "tooltip": "Path relative to the ComfyUI output folder."
                 }),
             },
         }
@@ -1486,12 +1504,11 @@ class TextFileReader:
     RETURN_NAMES = ("text_content",)
     FUNCTION = "read_file"
     CATEGORY = f"{_CATEGORY}"
-    DESCRIPTION = "Loads a text file from path within ComfyUI root folder."
-
+    DESCRIPTION = "Loads a text file from a path inside the ComfyUI output folder."
 
     def read_file(self, file_path):
-        # Resolve path relative to ComfyUI base directory, confined to it.
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        # Confine all reads to the ComfyUI output directory.
+        base_dir = text_io_base_dir()
         try:
             full_path = _safe_resolve_under_base(base_dir, file_path)
         except ValueError as e:
@@ -1507,15 +1524,16 @@ class TextFileReader:
         except Exception as e:
             return (f"Error reading file: {str(e)}",)
 
+
 class TextFileWriter:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "file_path": ("STRING", {
-                    "default": "output/configs/config1.txt", 
+                    "default": "configs/config1.txt",
                     "multiline": False,
-                    "tooltip": "The path where the text file will be saved, relative to the ComfyUI root folder."
+                    "tooltip": "The path where the text file will be saved, relative to the ComfyUI output folder."
                 }),
                 "mode": (["overwrite", "append", "increment"], {
                     "default": "overwrite",
@@ -1533,12 +1551,11 @@ class TextFileWriter:
     FUNCTION = "save_file"
     CATEGORY = f"{_CATEGORY}"
     OUTPUT_NODE = True
-    DESCRIPTION = "Saves a string into a text file within ComfyUI root folder."
-
+    DESCRIPTION = "Saves a string into a text file inside the ComfyUI output folder."
 
     def save_file(self, file_path, mode, text_input):
-        # 1. Setup base paths (confined to the ComfyUI root).
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        # 1. Confine all writes to the ComfyUI output directory.
+        base_dir = text_io_base_dir()
         try:
             full_path = _safe_resolve_under_base(base_dir, file_path)
         except ValueError as e:
@@ -1572,7 +1589,7 @@ class TextFileWriter:
                 except ValueError as e:
                     return (f"Error: {e}",)
 
-        # 3. Create directories only inside the validated base directory.
+        # 3. Create directories only inside the validated output directory.
         try:
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
         except Exception as e:
