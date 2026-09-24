@@ -43,7 +43,7 @@ DEFAULT_CONFIG = {
 AUDIO_EXTENSIONS = (".mp3", ".wav", ".mp4")
 PLACEHOLDER = "[no speakers saved]"
 
-_CATEGORY = "CoolB вљЎпёЏ"
+_CATEGORY = "CoolB Nodes ⚡️"
 
 def comfyui_root():
     if folder_paths is not None:
