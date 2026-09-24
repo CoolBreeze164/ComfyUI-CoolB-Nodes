@@ -1,0 +1,13 @@
+[project]
+name = "ComfyUI-CoolB-Nodes"
+description = "A simple pack of utility nodes for ComfyUI featuring saving/loading speakers with transcripts (useful alongside TTS packs), execution flow control (muting/bypassing nodes and groups on trigger to actively change the workflow state from run to run), some useful text file utilities (including save/load text file) and data type conversion."
+version = "1.0.0"
+license = {file = "LICENSE"}
+
+[project.urls]
+Repository = "https://github.com/CoolBreeze164/ComfyUI-CoolB-Nodes"
+
+[tool.comfy]
+PublisherId = "coolbreeze"
+DisplayName = "ComfyUI CoolB Nodes"
+Icon = ""
