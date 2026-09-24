@@ -26,7 +26,7 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    f"{k}": f"CB {v} вљЎпёЏ" for k, v in {
+    f"{k}": f"CB {v} ⚡️" for k, v in {
         "SaveSpeaker": "Save Speaker",
         "LoadSpeaker": "Load Speaker",
         "SetMuteBypassState": "Set Mute/Bypass State",
