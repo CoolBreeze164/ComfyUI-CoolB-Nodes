@@ -3,8 +3,15 @@ import json
 import time
 import wave
 import array
+import math
 
 import torch
+import torch.nn.functional as F
+
+import cv2
+import numpy as np
+from PIL import Image, ImageEnhance
+
 
 try:
     import folder_paths
@@ -24,13 +31,6 @@ try:
 except Exception:
     av = None
     AV_AVAILABLE = False
-
-try:
-    import numpy as np
-    NUMPY_AVAILABLE = True
-except Exception:
-    np = None
-    NUMPY_AVAILABLE = False
 
 
 PACK_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1746,3 +1746,661 @@ class AnyToPrimitive:
             return (bool(value),)
 
         return (value,)
+
+
+# New nodes in V1.1.0
+
+class AudioProcessor:
+    """
+    Processes a single audio track with precise control over volume, fades, and silence extensions.
+    """
+    
+    DESCRIPTION = "Processes an audio track with volume, fades, and silence padding. Can be used alongside native Merge Audio nodes to combine multiple tracks with precise control. Uses PyAV natively for resampling."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        sample_rates = [8000, 11025, 16000, 22050, 32000, 44100, 48000, 96000]
+        fade_curves = ["linear", "ease-inward", "ease-outward", "ease-in-out"]
+        
+        return {
+            "required": {
+                "audio": ("AUDIO", {"tooltip": "Input audio track to process."}),
+                "sample_rate": (sample_rates, {
+                    "default": 44100, 
+                    "tooltip": "Target sample rate for the output audio."
+                }),
+                "volume": ("FLOAT", {
+                    "default": 0.0, "min": -60.0, "max": 24.0, "step": 0.1,
+                    "tooltip": "Volume adjustment in dB."
+                }),
+                "fade_in_time": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 60.0, "step": 0.001,
+                    "tooltip": "Duration of the fade-in effect in seconds."
+                }),
+                "fade_out_time": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 60.0, "step": 0.001,
+                    "tooltip": "Duration of the fade-out effect in seconds."
+                }),
+                "fade_curve": (fade_curves, {
+                    "default": "linear",
+                    "tooltip": "The mathematical curve used for the fade transitions."
+                }),
+                "extend_start": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.001,
+                    "tooltip": "Amount of silence to add before the audio starts, in seconds."
+                }),
+                "extend_end": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 3600.0, "step": 0.001,
+                    "tooltip": "Amount of silence to add after the audio ends, in seconds."
+                })
+            }
+        }
+
+    RETURN_TYPES = ("AUDIO", "FLOAT")
+    RETURN_NAMES = ("audio", "duration")
+    FUNCTION = "audio_process"
+    CATEGORY = f"{_CATEGORY}"
+
+    def resample_wav(self, wav, orig_sr, target_sr):
+        if orig_sr == target_sr:
+            return wav
+            
+        batch_size, channels, samples = wav.shape
+        resampled = []
+        
+        for b in range(batch_size):
+            np_arr = wav[b].cpu().numpy()
+            if channels == 1:
+                layout = 'mono'
+            elif channels == 2:
+                layout = 'stereo'
+            else:
+                layout = f'{channels}c'
+                
+            try:
+                if HAS_PYAV:
+                    frame = av.AudioFrame.from_ndarray(np_arr, format='fltp', layout=layout)
+                    frame.sample_rate = orig_sr
+                    resampler = av.AudioResampler(format='fltp', layout=layout, rate=target_sr)
+                    
+                    frames = resampler.resample(frame)
+                    frames.extend(resampler.resample(None))
+                    
+                    if frames:
+                        arr = np.concatenate([f.to_ndarray() for f in frames], axis=1)
+                        resampled.append(torch.from_numpy(arr.copy()).to(wav.device))
+                        continue
+            except Exception:
+                pass
+                
+            # Fallback linear resample if PyAV fails
+            ratio = target_sr / orig_sr
+            new_samples = max(1, int(samples * ratio))
+            resampled_wav = F.interpolate(wav[b:b+1], size=new_samples, mode='linear', align_corners=False)[0]
+            resampled.append(resampled_wav)
+            
+        return torch.stack(resampled, dim=0)
+
+    def get_envelope(self, length, curve, dtype, device):
+        if length <= 0:
+            return torch.empty(0, dtype=dtype, device=device)
+            
+        t = torch.linspace(0, 1, length, dtype=dtype, device=device)
+        if curve == "linear":
+            env = t
+        elif curve == "ease-inward":
+            env = t ** 2
+        elif curve == "ease-outward":
+            env = 1 - (1 - t) ** 2
+        elif curve == "ease-in-out":
+            env = 0.5 - 0.5 * torch.cos(t * math.pi)
+        else:
+            env = t
+        return env
+
+    def audio_process(self, audio, sample_rate, volume, fade_in_time, fade_out_time, fade_curve, extend_start, extend_end):
+        if audio is None:
+            raise ValueError("Audio input is None")
+            
+        wav = audio["waveform"]
+        orig_sr = audio["sample_rate"]
+        
+        # 1. Resample
+        wav = self.resample_wav(wav, orig_sr, sample_rate)
+        b, c, t_len = wav.shape
+        
+        # 2. Apply Volume
+        linear_gain = 10 ** (volume / 20.0)
+        wav = wav * linear_gain
+        
+        # 3. Apply Fades (on the original audio boundaries)
+        fade_in_samp = int(fade_in_time * sample_rate)
+        fade_out_samp = int(fade_out_time * sample_rate)
+        
+        # Clamp fades to prevent overlap issues if combined fades exceed audio length
+        if fade_in_samp + fade_out_samp > t_len and t_len > 0:
+            ratio = fade_in_time / (fade_in_time + fade_out_time) if (fade_in_time + fade_out_time) > 0 else 0.5
+            fade_in_samp = int(t_len * ratio)
+            fade_out_samp = t_len - fade_in_samp
+
+        if fade_in_samp > 0 and t_len > 0:
+            env_in = self.get_envelope(fade_in_samp, fade_curve, wav.dtype, wav.device)
+            wav[:, :, :fade_in_samp] *= env_in.view(1, 1, -1)
+            
+        if fade_out_samp > 0 and t_len > 0:
+            env_out = self.get_envelope(fade_out_samp, fade_curve, wav.dtype, wav.device)
+            # fade out goes from 1 to 0, so we reverse the envelope
+            env_out = env_out.flip(0)
+            wav[:, :, -fade_out_samp:] *= env_out.view(1, 1, -1)
+            
+        # 4. Extends (Add silence AFTER fades are applied)
+        extend_start_samp = int(extend_start * sample_rate)
+        extend_end_samp = int(extend_end * sample_rate)
+        
+        if extend_start_samp > 0:
+            silence_start = torch.zeros((b, c, extend_start_samp), dtype=wav.dtype, device=wav.device)
+            wav = torch.cat([silence_start, wav], dim=2)
+            
+        if extend_end_samp > 0:
+            silence_end = torch.zeros((b, c, extend_end_samp), dtype=wav.dtype, device=wav.device)
+            wav = torch.cat([wav, silence_end], dim=2)
+            
+        final_duration = wav.shape[2] / sample_rate
+        
+        return ({"waveform": wav, "sample_rate": sample_rate}, final_duration)
+
+
+class AudioRollTrim:
+    DESCRIPTION = "Rolls audio by a time offset first, then trims from start/end. No resampling is performed; this is a cyclic sample shift and sample-accurate trim."
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "audio": (
+                    "AUDIO",
+                    {
+                        "tooltip": (
+                            "Audio input. Expects an AUDIO dict with 'waveform' and 'sample_rate'."
+                        )
+                    },
+                ),
+                "offset": (
+                    "FLOAT",
+                    {
+                        "default": 0.0,
+                        "min": -3600.0,
+                        "max": 3600.0,
+                        "step": 0.001,
+                        "tooltip": (
+                            "Roll amount in seconds. Positive = wave samples shift forward with modulo wrapping; negative = backward."
+                        ),
+                    },
+                ),
+                "trim_start": (
+                    "FLOAT",
+                    {
+                        "default": 0.0,
+                        "min": 0.0,
+                        "max": 3600.0,
+                        "step": 0.001,
+                        "tooltip": "Seconds to remove from the start (after rolling).",
+                    },
+                ),
+                "trim_end": (
+                    "FLOAT",
+                    {
+                        "default": 0.0,
+                        "min": 0.0,
+                        "max": 3600.0,
+                        "step": 0.001,
+                        "tooltip": "Seconds to remove from the end (after rolling).",
+                    },
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("AUDIO", "AUDIO", "AUDIO")
+    RETURN_NAMES = ("trimmed_audio", "start_audio", "end_audio")
+    FUNCTION = "roll_and_trim_audio"
+    CATEGORY = f"{_CATEGORY}"
+
+    def roll_and_trim_audio(self, audio, offset, trim_start, trim_end):
+        if audio is None:
+            raise ValueError("Audio input is None")
+
+        # Match AudioProcessor's I/O contract: read directly from the AUDIO dict.
+        waveform = audio["waveform"]
+        sample_rate = audio["sample_rate"]
+
+        if not torch.is_tensor(waveform):
+            waveform = torch.as_tensor(waveform)
+
+        # Ensure at least 1D.
+        if waveform.dim() == 0:
+            waveform = waveform.unsqueeze(0)
+
+        total_samples = waveform.shape[-1]
+
+        # Empty audio handling.
+        if total_samples == 0:
+            empty_waveform = self._empty_waveform(waveform)
+
+            rolled_audio = {"waveform": waveform, "sample_rate": sample_rate}
+            empty_audio = {"waveform": empty_waveform, "sample_rate": sample_rate}
+
+            return (rolled_audio, empty_audio, empty_audio)
+
+        # Safety fallback only if the input contains no usable sample rate.
+        if sample_rate <= 0:
+            sample_rate = 44100
+
+        offset_seconds = float(offset)
+        trim_start_seconds = max(0.0, float(trim_start))
+        trim_end_seconds = max(0.0, float(trim_end))
+
+        # Convert seconds to samples.
+        offset_samples = int(round(offset_seconds * sample_rate))
+        start_samples = int(round(trim_start_seconds * sample_rate))
+        end_samples = int(round(trim_end_seconds * sample_rate))
+
+        # Roll first.
+        k = offset_samples % total_samples
+
+        if k == 0:
+            rolled_waveform = waveform
+        else:
+            # Positive offset moves forward in time:
+            # -N samples -> [N+1, N+2, ..., N]
+            rolled_waveform = torch.roll(waveform, shifts=k, dims=-1)
+
+        # If trimming is impossible, return rolled audio and empty start/end audio.
+        if start_samples + end_samples >= total_samples:
+            original_duration = total_samples / sample_rate
+
+            print(
+                f"[AudioRollTrim] Warning: Cannot trim {trim_start_seconds:.3f}s from start "
+                f"and {trim_end_seconds:.3f}s from end."
+            )
+            print(
+                f"[AudioRollTrim] Audio only has {total_samples} samples "
+                f"(~{original_duration:.3f}s at {sample_rate} Hz)."
+            )
+            print(
+                "[AudioRollTrim] Returning rolled audio with empty start/end audio."
+            )
+
+            empty_waveform = self._empty_waveform(waveform)
+
+            rolled_audio = {"waveform": rolled_waveform, "sample_rate": sample_rate}
+            empty_audio = {"waveform": empty_waveform, "sample_rate": sample_rate}
+
+            return (rolled_audio, empty_audio, empty_audio)
+
+        # Trim.
+        start_idx = start_samples
+        end_idx = total_samples - end_samples
+
+        trimmed_waveform = rolled_waveform[..., start_idx:end_idx]
+
+        if start_samples > 0:
+            start_waveform = rolled_waveform[..., :start_samples]
+        else:
+            start_waveform = self._empty_waveform(waveform)
+
+        if end_samples > 0:
+            end_waveform = rolled_waveform[..., end_idx:]
+        else:
+            end_waveform = self._empty_waveform(waveform)
+
+        trimmed_audio = {"waveform": trimmed_waveform, "sample_rate": sample_rate}
+        start_audio = {"waveform": start_waveform, "sample_rate": sample_rate}
+        end_audio = {"waveform": end_waveform, "sample_rate": sample_rate}
+
+        return (trimmed_audio, start_audio, end_audio)
+
+    def _empty_waveform(self, waveform):
+        """
+        Create an empty waveform with the same leading dimensions, dtype, and device.
+        Assumes the sample dimension is the last dimension.
+        """
+        if waveform.dim() == 0:
+            return torch.empty(0, dtype=waveform.dtype, device=waveform.device)
+
+        return torch.empty(
+            *waveform.shape[:-1],
+            0,
+            dtype=waveform.dtype,
+            device=waveform.device,
+        )
+
+
+class VideoRollTrim:
+    DESCRIPTION = "Rolls the clip by an integer offset first, then trims frames from the start/end. Returns trimmed video, removed start frames, and removed end frames. For example, inputing images={A B C D E F G} with offset=3, trim_start=1 and trim_end=2 will return trimmed_video={F G A B}, start_frames={E} and end_frames={C D}"
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": (
+                    "IMAGE",
+                    {"tooltip": "Input video frames"},
+                ),
+                "offset": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": -9999,
+                        "max": 9999,
+                        "step": 1,
+                        "tooltip": "Roll amount. Positive = frame indices shift forward with modulo wrapping; negative = backward.",
+                    },
+                ),
+                "trim_start": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 1000,
+                        "step": 1,
+                        "tooltip": "Number of frames to remove from the start (after rolling).",
+                    },
+                ),
+                "trim_end": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 1000,
+                        "step": 1,
+                        "tooltip": "Number of frames to remove from the end (after rolling).",
+                    },
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE")
+    RETURN_NAMES = ("trimmed_video", "start_frames", "end_frames")
+    FUNCTION = "roll_and_trim"
+    CATEGORY = f"{_CATEGORY}"
+
+    def roll_and_trim(self, images, offset, trim_start, trim_end):
+        batch_size = images.shape[0]
+
+        # Handle empty batch safely
+        if batch_size == 0:
+            empty_tensor = torch.empty(
+                0, *images.shape[1:], dtype=images.dtype, device=images.device
+            )
+            return (images, empty_tensor, empty_tensor)
+
+        # Normalize offset
+        offset = int(offset)
+        trim_start = int(trim_start)
+        trim_end = int(trim_end)
+
+        k = offset % batch_size
+
+        # Roll first
+        if k == 0:
+            rolled_images = images
+        else:
+            # Same behavior as UnrollFrames: -1 -> [2, 3, ..., 1]
+            rolled_images = torch.roll(images, shifts=k, dims=0)
+
+        # Check if trimming is possible
+        if trim_start + trim_end >= batch_size:
+            print(
+                f"[VideoRollTrim] Warning: Cannot trim {trim_start} frames from start "
+                f"and {trim_end} frames from end as batch only has {batch_size} frames."
+            )
+            print(
+                "[VideoRollTrim] Returning rolled batch with empty start/end frames."
+            )
+
+            empty_tensor = torch.empty(
+                0, *images.shape[1:], dtype=images.dtype, device=images.device
+            )
+            return (rolled_images, empty_tensor, empty_tensor)
+
+        # Calculate start/end indices for trimmed batch
+        start_idx = trim_start
+        end_idx = batch_size - trim_end
+
+        # Extract trimmed frames
+        trimmed_images = rolled_images[start_idx:end_idx]
+
+        # Extract start frames
+        if trim_start > 0:
+            start_frames = rolled_images[:trim_start]
+        else:
+            start_frames = torch.empty(
+                0, *images.shape[1:], dtype=images.dtype, device=images.device
+            )
+
+        # Extract end frames
+        if trim_end > 0:
+            end_frames = rolled_images[end_idx:]
+        else:
+            end_frames = torch.empty(
+                0, *images.shape[1:], dtype=images.dtype, device=images.device
+            )
+        
+        return (trimmed_images, start_frames, end_frames)
+
+
+class AudioInfo:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "audio": ("AUDIO",),
+            },
+        }
+
+    RETURN_TYPES = ("FLOAT", "INT", "INT", "INT", "STRING")
+    RETURN_NAMES = ("duration_sec", "sample_rate", "total_samples", "channels", "info")
+    FUNCTION = "audio_info"
+    CATEGORY = f"{_CATEGORY}"
+    DESCRIPTION = "A simple audio info node."
+
+    def audio_info(self, audio):
+        waveform = audio["waveform"]          # shape: (batch, channels, samples)
+        sample_rate = int(audio["sample_rate"])
+
+        channels = int(waveform.shape[1])
+        total_samples = int(waveform.shape[2])
+        duration_sec = total_samples / sample_rate
+
+        # Format as MM:SS.xx (2 decimal places)
+        minutes = int(duration_sec // 60)
+        seconds = duration_sec % 60
+        duration_str = f"{minutes:02d}:{seconds:05.2f}"
+
+        info = (
+            f"Duration: {duration_str} ({duration_sec:.5f} s)\n"
+            f"Sample rate: {sample_rate} Hz\n"
+            f"Samples: {total_samples}\n"
+            f"Channels: {channels}"
+        )
+
+        return (float(duration_sec), sample_rate, total_samples, channels, info)
+
+
+def srgb_to_linear(x):
+    x = x.clamp(0.0, 1.0)
+    return torch.where(
+        x <= 0.04045,
+        x / 12.92,
+        ((x.clamp(min=0.04045) + 0.055) / 1.055) ** 2.4
+    )
+
+
+def linear_to_srgb(x):
+    x = x.clamp(0.0, 1.0)
+    return torch.where(
+        x <= 0.0031308,
+        x * 12.92,
+        1.055 * x.clamp(min=0.0031308) ** (1.0 / 2.4) - 0.055
+    )
+
+
+
+class NearestResolution:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "megapixels": (
+                    "FLOAT",
+                    {
+                        "default": 1.0,
+                        "min": 0.01,
+                        "max": 100.0,
+                        "step": 0.01,
+                        "round": 0.01,
+                    },
+                ),
+                "divisible_by": (
+                    "INT",
+                    {
+                        "default": 32,
+                        "min": 1,
+                        "max": 1024,
+                    },
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("INT", "INT")
+    RETURN_NAMES = ("width", "height")
+    FUNCTION = "resolve"
+    CATEGORY = f"{_CATEGORY}"
+    DESCRIPTION = "Calculates the nearest resolution for an input image/video that matches chosen megapixels and divisible_by, while keeping the aspect ratio closest to the original. Connect output to any resize node."
+
+    def resolve_megapixel_size(self, w, h, megapixels):
+        w = max(1.0, float(w))
+        h = max(1.0, float(h))
+
+        aspect = w / h if h else 1.0
+        area = max(0.000001, float(megapixels)) * 1_000_000.0
+
+        nw = max(1, int(round(math.sqrt(area * aspect))))
+        nh = max(1, int(round(area / max(1, nw))))
+
+        return nw, nh
+
+    def snap(self, v, div):
+        v = max(1, int(v))
+        div = max(1, int(round(div)))
+
+        if div <= 1:
+            return v
+
+        return max(div, (v // div) * div)
+
+    def resolve(self, image, megapixels, divisible_by):
+        # Image batches have shape: B, H, W, C
+        # Only the first frame resolution is used.
+        orig_h = max(1, int(image.shape[1]))
+        orig_w = max(1, int(image.shape[2]))
+
+        w, h = self.resolve_megapixel_size(
+            orig_w,
+            orig_h,
+            megapixels
+        )
+
+        div = max(1, int(round(divisible_by)))
+
+        w = self.snap(w, div)
+        h = self.snap(h, div)
+
+        return (int(w), int(h))
+
+
+class ColorCorrect:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "temperature": ("FLOAT", {"default": 0, "min": -100, "max": 100, "step": 1, "tooltip": "Color temperature. Positive values warm the image, negative values cool it."}),
+                "hue": ("FLOAT", {"default": 0, "min": -90, "max": 90, "step": 1, "tooltip": "Shifts the colors around the hue wheel, in degrees."}),
+                "brightness": ("FLOAT", {"default": 0, "min": -100, "max": 100, "step": 1, "tooltip": "Adjusts overall brightness. -100 becomes black."}),
+                "contrast": ("FLOAT", {"default": 0, "min": -100, "max": 100, "step": 1, "tooltip": "Adjusts contrast. -100 reduces the image to flat gray."}),
+                "saturation": ("FLOAT", {"default": 0, "min": -100, "max": 100, "step": 1, "tooltip": "Adjusts color intensity. -100 becomes grayscale."}),
+                "gamma": ("FLOAT", {"default": 1, "min": 0.2, "max": 2.2, "step": 0.1, "tooltip": "Gamma correction. Values below 1 brighten midtones, values above 1 darken them."}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    FUNCTION = "color_correct"
+    CATEGORY = f"{_CATEGORY}"
+    DESCRIPTION = "Tweaks the color of the image/video. Processing speed highly depends on the number of paremeter values, chosen to be tweaked at the same time (e.i. changing one parameter and leaving others at default values is processed much faster)."
+
+    def color_correct(self, image, temperature, hue, brightness, contrast, saturation, gamma):
+        # 1) no-op fast path
+        if (temperature == 0 and hue == 0 and brightness == 0 and
+                contrast == 0 and saturation == 0 and gamma == 1.0):
+            return (image,)
+
+        device, dtype = image.device, image.dtype
+
+        # 2) single H2D/D2H transfer for the whole batch
+        arr = image.detach().cpu().numpy().astype(np.float32, copy=True)  # [B,H,W,C] in [0,1]
+
+        # 3) brightness (was PIL) — vectorized
+        if brightness != 0:
+            arr *= (1.0 + brightness / 100.0)
+            np.clip(arr, 0.0, 1.0, out=arr)
+
+        # 4) contrast (was PIL) — mean-based, vectorized
+        if contrast != 0:
+            cf = 1.0 + contrast / 100.0
+            # PIL's ImageEnhance.Contrast blends toward the mean of the *L* channel.
+            # Per-image scalar luma mean, broadcast to all 3 channels:
+            lum = 0.299 * arr[..., 0] + 0.587 * arr[..., 1] + 0.114 * arr[..., 2]
+            mean_l = lum.mean(axis=(1, 2), keepdims=True)[..., None]   # [B,1,1,1]
+            arr = (arr - mean_l) * cf + mean_l
+            np.clip(arr, 0.0, 1.0, out=arr)
+
+        # 5) temperature — vectorized
+        if temperature != 0:
+            t = temperature / 100.0
+            if t > 0:
+                arr[..., 0] *= (1.0 + t)
+                arr[..., 1] *= (1.0 + t * 0.4)
+            else:
+                arr[..., 2] *= (1.0 - t)
+            np.clip(arr, 0.0, 1.0, out=arr)
+
+        # 6) gamma — vectorized
+        if gamma != 1.0:
+            np.power(arr, gamma, out=arr)
+            np.clip(arr, 0.0, 1.0, out=arr)
+
+        # 7) color-space ops — still per-image (cv2 is not batched),
+        #    but only run the branches that actually need it.
+        if saturation != 0 or hue != 0:
+            sat_f = 1.0 + saturation / 100.0
+            need_sat = saturation != 0
+            need_hue = hue != 0
+            for b in range(arr.shape[0]):
+                img = arr[b]
+                if need_sat:
+                    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)         # [0,1] float — correct range
+                    hls[:, :, 2] = np.clip(sat_f * hls[:, :, 2], 0.0, 1.0)
+                    img = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB)
+                if need_hue:
+                    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)         # H in [0,360) for float32
+                    hsv[:, :, 0] = (hsv[:, :, 0] + hue) % 360.0
+                    img = cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
+                arr[b] = img
+
+        np.clip(arr, 0.0, 1.0, out=arr)
+
+        # 8) single transfer back, dtype/device preserved, no float64 detour
+        result = torch.from_numpy(arr).to(device=device, dtype=dtype)
+        return (result,)
