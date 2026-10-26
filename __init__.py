@@ -2,7 +2,7 @@ import os
 import importlib.util
 
 try:
-    from .nodes import SaveSpeaker, LoadSpeaker, SetMuteBypassState, Textbox, StringListMatchIndex, TextFileReader, TextFileWriter, StringSelector, SetGroupMuteBypassState, AnyToPrimitive
+    from .nodes import SaveSpeaker, LoadSpeaker, SetMuteBypassState, Textbox, StringListMatchIndex, TextFileReader, TextFileWriter, StringSelector, SetGroupMuteBypassState, AnyToPrimitive, AudioProcessor, VideoRollTrim, AudioRollTrim, AudioInfo, NearestResolution, ColorCorrect
 except ImportError:
     _nodes_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "nodes.py")
     _spec = importlib.util.spec_from_file_location("comfyui_speaker_pack_nodes", _nodes_path)
@@ -23,6 +23,12 @@ NODE_CLASS_MAPPINGS = {
     "CBStringSelector": StringSelector,
     "SetGroupMuteBypassState": SetGroupMuteBypassState,
     "AnyToPrimitive": AnyToPrimitive,
+    "AudioProcessor": AudioProcessor,
+    "VideoRollTrim": VideoRollTrim,
+    "AudioRollTrim": AudioRollTrim,
+    "AudioInfo": AudioInfo,
+    "NearestResolution": NearestResolution,
+    "CBColorCorrect": ColorCorrect,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -37,6 +43,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
         "CBStringSelector": "String Selector",
         "SetGroupMuteBypassState": "Set Group Mute/Bypass State",
         "AnyToPrimitive": "Data type Converter",
+        "AudioProcessor": "Audio Processor",
+        "VideoRollTrim": "Roll and Trim Video Frames",
+        "AudioRollTrim": "Roll and Trim Audio Samples",
+        "AudioInfo": "Audio Info",
+        "NearestResolution": "Nearest Resolution",
+        "CBColorCorrect": "Color Correct",
     }.items()
 }
 
