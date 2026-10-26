@@ -1,6 +1,6 @@
 # ComfyUI CoolB Nodes ⚡️
 
-A simple pack of utility nodes for **ComfyUI** featuring saving/loading speakers with transcripts (useful alongside TTS packs), execution flow control (muting/bypassing nodes and groups on trigger to actively change the workflow state from run to run), some useful text file utilities (including save/load text file) and data type conversion.
+A simple pack of utility nodes for **ComfyUI** featuring saving/loading speakers with transcripts (useful alongside TTS packs), execution flow control (muting/bypassing nodes and groups on trigger to actively change the workflow state from run to run), some useful image, audio, video and text file utilities (including save/load text file) and data type conversion.
 
 This pack was created primarily to support my other project — a fully [Autonomous Telegram Bot](https://github.com/CoolBreeze164/ComfyUI-Autonomous-Telegram-Bot) inside a single ComfyUI workflow.
 
@@ -8,12 +8,22 @@ This pack was created primarily to support my other project — a fully [Autonom
 
 ## 🧩 List of Nodes
 
-<img width="1591" height="1061" alt="image" src="https://github.com/user-attachments/assets/33939e50-a6e4-41b1-84a2-0d83f5b70c2b" />
+<img width="2083" height="972" alt="image" src="https://github.com/user-attachments/assets/e6f3b9e1-d1a6-48d2-b687-f11c6664d3cd" />
 
-### 🎙️ Audio & Speaker Management
-Designed for TTS (Text-to-Speech) workflows, voice cloning, and audio archiving. Automatically uses `PyAV`, `torchaudio`, or native fallbacks.
+### 🎙️ Speaker Management
+Designed for TTS (Text-to-Speech) workflows, voice cloning, and audio archiving. Automatically uses `PyAV` or `torchaudio` fallback.
 * **CB Save Speaker:** Saves an audio tensor/file alongside its provided text transcription (speech script) into a structured format inside `models/SPEAKERS` (customizable via `config.json`). Supports `.mp3` and `.wav`.
 * **CB Load Speaker:** Lists and loads saved speakers dynamically from your storage, outputting both the audio waveform and its reference text.
+
+### 🔊 Audio processing
+* **CB Audio Info:** A simple node that provides information about the input audio (duration, sample rate, total samples, number of channels).
+* **CB Audio Processor:** Processes an audio track with volume, fades, and silence padding. Can be used alongside native "Merge Audio" nodes to combine multiple tracks with precise control.
+* **CB Roll and Trim Audio Samples:** Rolls audio by a time offset first, then trims from start/end. No resampling is performed, does a cyclic sample shift and sample-accurate trim. Returns trimmed audio, removed start audio, and removed end audio. Can be used to trim and split audio track at the right position or when dealing with looping videos.
+
+### 🎬 Image/video processing
+* **CB Roll and Trim Video Frames:**  Does the same as the other node for audio, but for video frames. Rolls the clip by an integer offset first, then trims frames from the start/end. Returns trimmed video, removed start frames, and removed end frames. Very useful for working with looping videos.
+* **CB Nearest Resolution:** Calculates the nearest resolution for an input image/video that matches chosen `megapixels` and `divisible_by`, while keeping the aspect ratio closest to the original. Useful for quick calculations of width/height. The output can be connected to the native "Resize Image/Mask" node.
+* **CB Color Correct:** Allows to tweak the color of the image/video by changing the following parameters: temperature, hue, brightness, contrast, saturation and gamma. An improved version of the node from from art-venture pack; was optimized and made much faster for processing batches.
 
 ### ⚙️ Automation & Workflow Control
 * **CB Set Mute/Bypass State:** Allows you to dynamically **Mute**, **Bypass**, or **Activate** one or multiple nodes specified by their IDs using any passthrough signal (applies to the *next* prompt run). An improved version of the node from ComfyUI-Impact-Pack.
@@ -33,33 +43,24 @@ Designed for TTS (Text-to-Speech) workflows, voice cloning, and audio archiving.
 
 ---
 
-## 🛠️ Installation
+## 🛠️ Installation and requirements
 
-### Method 1: Via ComfyUI Manager (Recommended)
+### Install Via ComfyUI Manager (clones the repo and installs `requirements.txt`)
 1. Open ComfyUI and click on the **Manager** button.
 2. Click **Custom Nodes Manager**.
 3. Search for `ComfyUI CoolB Nodes` and click **Install**.
 4. Restart ComfyUI.
 
-### Method 2: Manual Installation
-Download this repo's code and unpack it into ComfyUI/custom_nodes (no other dependencies required: `av`, `numpy` and `torchaudio` come with ComfyUI).
-Or do it through console:
-1. Open your terminal and navigate to your ComfyUI custom nodes directory:
-   ```bash
-   cd ComfyUI/custom_nodes
-   ```
-2. Clone this repo:
-   ```bash
-   git clone https://github.com/CoolBreeze164/ComfyUI-CoolB-Nodes
-   ```
-3. Restart ComfyUI.
+**Requirements:** `torch`, `av`, `numpy`, and `pillow` come with ComfyUI natively. The only new requirement is `opencv-python` (`cv2`).
 
 ---
 
 ## 👥 Credits & Acknowledgements
-This pack was vibecoded with Qwen and Gemini. Some of the nodes were inspired by [ComfyUI-Impact-Pack](https://github.com/ltdrdata/ComfyUI-Impact-Pack "ComfyUI Impact Pack github") and [ComfyUI-Chibi-Nodes](https://github.com/chibiace/ComfyUI-Chibi-Nodes "ComfyUI Chibi Nodes github").
+This pack was vibecoded with Qwen, Gemini and DeepSeek. Some of the nodes were inspired by [Impact-Pack](https://github.com/ltdrdata/ComfyUI-Impact-Pack), [rgthree-comfy](https://github.com/rgthree/rgthree-comfy), [Chibi-Nodes](https://github.com/chibiace/ComfyUI-Chibi-Nodes), [Fill-Nodes](https://github.com/filliptm/ComfyUI_Fill-Nodes), [art-venture](https://github.com/sipherxyz/comfyui-art-venture), [Geeky_AudioMixer](https://github.com/GeekyGhost/ComfyUI_Geeky_AudioMixer), [WhiteRabbit](https://github.com/Artificial-Sweetener/WhiteRabbit) and [afloy_audio_tools](https://github.com/afloy011-spec/afloy_audio_tools).
 
 ---
 
-## 📜 License
-This node pack is open-source and distributed under the **MIT License**. Please refer to the dependency licenses regarding audio backends (`PyAV` / `LGPL`, etc) if redistributed commercially.
+## CHANGELOG
+**V1.1.0**
+* Added 6 new nodes: **CB Audio Info**, **CB Audio Processor**, **CB Roll and Trim Audio Samples**, **CB Roll and Trim Video Frames**, **CB Nearest Resolution**, **CB Color Correct**.
+* Added `requirements.txt` to enable `opencv-python` (`cv2`) for **CB Color Correct** node.
