@@ -1,2 +1,6 @@
+numpy
+pillow
+av
+
 # for color correct node
 opencv-python
