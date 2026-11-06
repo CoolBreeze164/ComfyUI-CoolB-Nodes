@@ -9,9 +9,14 @@ import torch
 import torch.nn.functional as F
 
 import cv2
-import numpy as np
 from PIL import Image, ImageEnhance
 
+try:
+    import numpy as np
+    NUMPY_AVAILABLE = True
+except Exception:
+    np = None
+    NUMPY_AVAILABLE = False
 
 try:
     import folder_paths
@@ -1273,7 +1278,14 @@ class LoadSpeaker:
                 "speaker": (speakers, {
                     "default": speakers[0] if speakers else PLACEHOLDER,
                 }),
-            }
+            },
+            "optional": {
+                "speaker_override": ("STRING", {
+                    "default": "",
+                    "forceInput": True,
+                    "tooltip": "If connected, overrides the speaker widget value. Input STRING must match existing speaker's name.",
+                }),
+            },
         }
 
     RETURN_TYPES = ("AUDIO", "STRING")
@@ -1282,17 +1294,21 @@ class LoadSpeaker:
     CATEGORY = f"{_CATEGORY}"
     DESCRIPTION = "Loads a speaker's voice audio sample and corresponding speach transcription from the saving folder. Default saving folder is models/SPEAKERS (can be changed in config.json)."
 
-    def load_speaker(self, speaker):
-        if isinstance(speaker, (list, tuple)):
-            speaker = speaker[0] if len(speaker) > 0 else ""
+    def load_speaker(self, speaker, speaker_override=""):
+        # The override (if connected and non-empty) wins over the widget value.
+        name = speaker_override if speaker_override else speaker
 
-        speaker = str(speaker or "")
+        # Normalize combo/list/tuple values from either source.
+        if isinstance(name, (list, tuple)):
+            name = next((s for s in name if isinstance(s, str)), "")
 
-        if not speaker:
+        name = str(name or "")
+
+        if not name:
             return (empty_audio(), "")
 
         speakers_dir = get_speakers_dir()
-        safe_name = sanitize_filename(speaker)
+        safe_name = sanitize_filename(name)
 
         base_path = os.path.join(speakers_dir, safe_name)
         json_path = find_json_path(base_path)
@@ -1305,12 +1321,12 @@ class LoadSpeaker:
 
         audio_path = find_audio_path(base_path, preferred_audio)
 
-        if speaker == PLACEHOLDER and json_path is None and audio_path is None:
+        if name == PLACEHOLDER and json_path is None and audio_path is None:
             return (empty_audio(), "")
 
         if audio_path is None:
             raise FileNotFoundError(
-                f"No audio file found for speaker '{speaker}' in {speakers_dir}"
+                f"No audio file found for speaker '{name}' in {speakers_dir}"
             )
 
         audio = load_audio_file(audio_path)
@@ -2351,12 +2367,12 @@ class ColorCorrect:
         # 2) single H2D/D2H transfer for the whole batch
         arr = image.detach().cpu().numpy().astype(np.float32, copy=True)  # [B,H,W,C] in [0,1]
 
-        # 3) brightness (was PIL) — vectorized
+        # 3) brightness (was PIL) vectorized
         if brightness != 0:
             arr *= (1.0 + brightness / 100.0)
             np.clip(arr, 0.0, 1.0, out=arr)
 
-        # 4) contrast (was PIL) — mean-based, vectorized
+        # 4) contrast (was PIL) mean-based, vectorized
         if contrast != 0:
             cf = 1.0 + contrast / 100.0
             # PIL's ImageEnhance.Contrast blends toward the mean of the *L* channel.
@@ -2366,7 +2382,7 @@ class ColorCorrect:
             arr = (arr - mean_l) * cf + mean_l
             np.clip(arr, 0.0, 1.0, out=arr)
 
-        # 5) temperature — vectorized
+        # 5) temperature vectorized
         if temperature != 0:
             t = temperature / 100.0
             if t > 0:
@@ -2376,12 +2392,12 @@ class ColorCorrect:
                 arr[..., 2] *= (1.0 - t)
             np.clip(arr, 0.0, 1.0, out=arr)
 
-        # 6) gamma — vectorized
+        # 6) gamma vectorized
         if gamma != 1.0:
             np.power(arr, gamma, out=arr)
             np.clip(arr, 0.0, 1.0, out=arr)
 
-        # 7) color-space ops — still per-image (cv2 is not batched),
+        # 7) color-space ops still per-image (cv2 is not batched),
         #    but only run the branches that actually need it.
         if saturation != 0 or hue != 0:
             sat_f = 1.0 + saturation / 100.0
@@ -2390,7 +2406,7 @@ class ColorCorrect:
             for b in range(arr.shape[0]):
                 img = arr[b]
                 if need_sat:
-                    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)         # [0,1] float — correct range
+                    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)         # [0,1] float correct range
                     hls[:, :, 2] = np.clip(sat_f * hls[:, :, 2], 0.0, 1.0)
                     img = cv2.cvtColor(hls, cv2.COLOR_HLS2RGB)
                 if need_hue:
