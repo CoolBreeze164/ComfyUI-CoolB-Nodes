@@ -61,6 +61,10 @@ This pack was vibecoded with Qwen, Gemini and DeepSeek. Some of the nodes were i
 ---
 
 ## CHANGELOG
+**V1.1.1**
+* Added optional `speaker_override` to **CB Load Speaker** node.
+* Fixed numpy import.
+
 **V1.1.0**
 * Added 6 new nodes: **CB Audio Info**, **CB Audio Processor**, **CB Roll and Trim Audio Samples**, **CB Roll and Trim Video Frames**, **CB Nearest Resolution**, **CB Color Correct**.
 * Added `requirements.txt` to enable `opencv-python` (`cv2`) for **CB Color Correct** node.
